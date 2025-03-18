@@ -1,0 +1,163 @@
+一.结构：
+1.GPOPS-II主要由3部分组成
+    1.1主函数 main function：用于设置求解问题的各类初始参数，配置GPOPS参数，进行计算并得出结果。
+        1.1.1指定求解问题的上下限，以一个阶段（phase）为例，一般包括如下几类：
+            该阶段的边界条件 bounds
+                初始时间、终端时间
+                初始状态、过程状态、终端状态
+                控制量
+                积分量
+            该阶段的初值和末值猜测 guess
+                初始时间、终端时间
+                初始状态、终端状态
+                控制量
+                积分量
+            该阶段的路径约束 path 主要是对控制量或者状态变量设置一些等式/不等式约束
+            每个阶段都可以有bounds.phase(iphase).path.lower和upper,不等式则为上下值，等式则相等
+            然后在continuous function的每个阶段phaseout(i).path = f(x)或者f(u);
+            
+            该阶段的事件约束 event，多用于保证连接处的连续性，n个阶段，设置n-1个bounds.eventgroup(i).lower和upper
+            bounds.eventgroup(i).lower=[zeros(1,length(x)),0]
+            然后在endpoint function中对其定义output.eventgroup(k).event =[xki-xk-1f,tki-tk-1f]
+            该阶段的静态参数 auxdata
+
+        1.1.2上述变量统一被 setup 纳入结构体变量
+            setup包含必填字段和可选字段。
+               必填字段：
+                    name：不带空格的字符串，对要求解问题的描述；
+                    function：包含连续函数continuous function和端点函数endpoint function的结构体；
+                    bounds：包含变量和约束的上下限信息的结构体；
+                    guess：包含对问题中的时间、状态、控制、积分和静态参数的猜测的结构体。
+            
+                可选字段：          
+                    auxdata：辅助数据的结构体，这样就可以不使用全局变量而使用auxdata.args来传递求解问题时所需要用到的部分常量。(args代表任意需要命名的参数，即参数arguments的缩写，无实际意义。)
+                
+                    derivatives：指定 NLP 求解器所使用的导数近似和 NLP 求解器所使用的导数阶次（first或second）的结构。衍生字段包含
+                        derivatives.supplier：NLP 求解器所使用的导数近似，可选值为sparseFD, sparseBD, sparseCD，默认值为 sparseFD。
+                        derivatives.derivativelevel：NLP 求解器使用的导数阶次，可选值为 first, second，默认值为 first。
+                        derivatives.dependencies：NLP 求解器的依赖关系，可选值为 full, sparse, spareseNaN，默认值为 sparseNaN。
+                
+                    scales：求解问题时要使用的尺度类型，可选项为none和automatic-bounds，默认值为none。
+                
+                    mesh：求解问题的网格细化方法，包括网格细化类型、精度公差及初始网格。衍生字段包含
+                        mesh.method：网格细化方法，可选值为 hp, hp1，默认值为hp1。
+                        mesh.tolerance：网格要求的精度容差，为0到1之间的正数，默认值为10^-3。
+                        mesh.maxiteration：网格细化最大的迭代次数，为非负整数，默认值为 10。
+                        mesh.colpointsmin：网格间隔中配置点最小数量，默认值为 3。
+                        mesh.colpointsmax：网格间隔中配置点最大数量，默认值为 10。
+                        mesh.phase.fraction：每个阶段的网络间隔，是一个0到1的缩放区间，N个间隔，行向量加起来等于1，默认值为0.1*ones(1,10)。
+                        mesh.phase.colpoints：每个阶段的配置点，也是行向量，默认值为4*ones(1,10)。
+                
+                    nlp：要使用的 NLP 求解器类型结构体，可选字段包含
+                        nlp.solver：求解器类型，可选值为 snopt, ipopt。
+                        nlp.ipoptoptions
+                            nlp.ipoptoptions.linear_solver：mumps or ma57。
+                            nlp.ipoptoptions.tolerance：默认值 1 0 − 7 10^{-7} 10−7。
+                            nlp.ipoptoptions.maxiterations： 默认值为 2000 2000 2000。
+                        nlp.snoptoptions
+                            nlp.snoptoptions.tolerance： 默认值为 1 0 − 6 10^{−6} 10−6。
+                            nlp.snoptoptions.maxiterations： 默认 2000 2000 2000。
+           1.1.3function的语法            
+                指定连续函数和端点函数的函数句柄，代码为            
+                    setup.functions.continuous = @continuousfun
+                    setup.functions.endpoint   = @endpointfun
+
+    1.2连续函数 continuous function：用于表示求解问题的动力学关系，计算每个阶段的被积函数和路径约束。（动力学、路径约束、被积函数）   
+        输入：  
+            input.phase(p).time：时间。
+            input.phase(p).state：状态量。
+            input.phase(p).control：控制量。
+            input.phase(p).parameter：静态参数量。
+        
+        输出：一个长度为阶段数p的结构向量，包括    
+            output.dynamics：微分状态。
+            output.path：路径约束。
+            output.integrand：积分。
+        注意里面的变量不是按照顺序逻辑一步一各值，而是优化过程中的序列，运算全部用点运算;
+        每个阶段的变量要不一样
+    
+        1.3端点函数 endpoint function：用于定义各个阶段初始点和终端点的值，计算求解问题的成本。（初终值、性能指标）
+ 
+            输入：     
+                input.phase(p).initialtime：阶段p的起始时间。
+                input.phase(p).finaltime：阶段p的起始时间。
+                input.phase(p).initialstate：阶段p的起始状态。
+                input.phase(p).finalstate：阶段p的终止状态。
+                input.phase(p).integral：阶段p的积分。
+                input.parameter：阶段p的静态参数。  
+            输出     
+                output.objective：标量，目标函数。
+                output.eventgroup。
+
+二、具体结构变量的用法
+    2.1bounds的语法
+        包括3个成员：
+            bounds.phase: 指定了时间、状态、控制、路径约束和每个阶段的积分的界限。
+                phase.initialtime.lower: 起始时间的下界。
+                phase.initialtime.upper: 起始时间的上界。
+                phase(p).finaltime.lower: 终止时间的下界。
+                phase(p).finaltime.upper: 终止时间的上界。
+
+                phase(p).initialstate.lower: 初始状态的下界。
+                phase(p).initialstate.upper: 初始状态的上界。
+                phase(p).state.lower: 每个阶段状态的下界。
+                phase(p).state.upper: 每个阶段状态的上界。
+                phase(p).finalstate.lower: 终止状态的下界。
+                phase(p).finalstate.upper: 终止状态的上界。
+
+                phase(p).control.lower: 每个阶段控制的下界。
+                phase(p).control.upper: 每个阶段控制的上界。
+
+                phase(p).path.lower: 每个阶段路径约束的下界。
+                phase(p).path.upper: 每个阶段路径约束的上界。
+
+                phase(p).integral.lower: 每个阶段积分的下界。
+                phase(p).integral.upper: 每个阶段积分的上界。
+
+                phase(p).duration.lower: 每个阶段时间的下界。
+                phase(p).duration.upper: 每个阶段时间的上界。
+            bounds.parameters: 包含问题中静态参数的下界和上界。
+            bounds.eventgroup: 长度为G的结构数组，其中G是问题中事件组的数量。
+
+    2.2guess的语法       
+        guess结构体里面的值代表了整个求解过程的初始值        
+            guess.phase(p).time: 阶段p的时间猜测。
+            guess.phase(p).state: 阶段p的状态量猜测。
+            guess.phase(p).control: 阶段p的控制量猜测。
+            guess.phase(p).integral: 阶段p的积分量猜测。
+
+    2.3output的语法
+        result
+            result.solution： 最优的时间、状态和控制以及静态参数。
+                solution.phase(p).time：时间。
+                solution.phase(p).state：状态量。
+                solution.phase(p).control：控制量。
+                solution.parameter：静态参数。
+            result.objective： 最优值。
+            result.setup：问题设置。
+            result.nextsetup。
+        meshhistory： 对每个求解NLP的网格进行求解和误差估计。
+        meshiterations： 迭代次数。
+
+
+
+
+报错修改
+1.索引值超过1，可能是phaseout(i).dynamics,忘了加(i)
+2.数组长度不匹配，可能是phaseout(i).dynamics中的dx，每个变量维度不同
+3.jacobian is empty 可能是控制量没有出现在动力学模型中
+4.无法执行赋值,左侧和右侧的元素数目不同 可能是 eventgroup的个数和状态变量个数不同；或者是continuous中没有点运行，两个状态变量直接要点运算
+
+
+
+
+
+
+
+
+
+
+
+
+
+
