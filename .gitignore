@@ -1,0 +1,8 @@
+# Simulink build cache
+slprj/
+*.slxc
+*.autosave
+# MATLAB
+*.asv
+*.mex*
+.DS_Store
